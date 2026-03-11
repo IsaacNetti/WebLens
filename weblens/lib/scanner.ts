@@ -52,7 +52,7 @@ export async function runSiteScan(scanId: string): Promise<void> {
       }
 
       setScanStatus(scanId, 'running', 'analyzing-page', nextUrl);
-      addScanLog(scanId, 'analyzing-page', `Analyzing ${nextUrl}`);
+      addScanLog(scanId, 'analyzing-page', `Page analysis started for ${nextUrl}`);
 
       // Each page is processed sequentially so the status log reads clearly
       // and the server work is easier to understand.
@@ -157,6 +157,13 @@ async function analyzeSinglePage(
 
     await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 
+    const pageState = await page.evaluate(() => document.readyState).catch(() => 'unavailable');
+    addScanLog(
+      scanId,
+      'analyzing-page',
+      `Page loaded successfully for ${targetUrl}. Final URL: ${page.url()}. readyState: ${pageState}. Frames detected: ${page.frames().length}.`
+    );
+
     // Collect the page data we need for SEO checks and future crawling first.
     // This lets SEO succeed even if accessibility tooling fails later.
     const dom = await page.evaluate(() => {
@@ -187,6 +194,12 @@ async function analyzeSinglePage(
       } satisfies SeoDomSnapshot & { links: string[] };
     });
 
+    addScanLog(
+      scanId,
+      'analyzing-page',
+      `DOM snapshot collected for ${page.url()}. Title length: ${dom.title.length}. Images: ${dom.imageCount}. Links discovered before filtering: ${dom.links.length}.`
+    );
+
     const currentUrl = page.url();
     const normalizedCurrent = normalizeCrawlUrl(currentUrl) ?? currentUrl;
     const discoveredLinks = dom.links
@@ -197,34 +210,39 @@ async function analyzeSinglePage(
 
     const seoResult = analyzeSeoForPage(normalizedCurrent, dom.title || normalizedCurrent, dom);
 
+    addScanLog(
+      scanId,
+      'analyzing-page',
+      `SEO analysis completed for ${normalizedCurrent}. Internal crawl links kept: ${discoveredLinks.length}.`
+    );
+
     let accessibility: PageAnalysisResult['accessibility'] = {
       violations: [],
       passes: []
     };
     let accessibilityError: string | undefined;
 
-    try {
-      const axeResults = await runAxeOnPage(page);
-      accessibility = {
-        violations: axeResults.violations.map(minifyAxeRule),
-        passes: axeResults.passes.map(minifyAxeRule)
-      };
+    addScanLog(
+      scanId,
+      'analyzing-page',
+      `Accessibility analysis starting for ${normalizedCurrent}. Page closed: ${page.isClosed()}. Main frame URL: ${page.mainFrame().url()}. Frames: ${page.frames().length}.`
+    );
 
-      if (axeResults.violations.length === 0 && axeResults.passes.length === 0) {
-        addScanLog(
-          scanId,
-          'analyzing-page',
-          `Accessibility analysis completed for ${normalizedCurrent}, but axe only returned incomplete or inapplicable results.`
-        );
-      }
-    } catch (error) {
-      accessibilityError = error instanceof Error ? error.message : 'Accessibility analysis failed.';
+    try {
+      const axeRun = await runAxeOnPage(page);
+      accessibility = {
+        violations: axeRun.results.violations.map(minifyAxeRule),
+        passes: axeRun.results.passes.map(minifyAxeRule)
+      };
 
       addScanLog(
         scanId,
         'analyzing-page',
-        `Accessibility analysis failed for ${normalizedCurrent}, but SEO results were still collected.`
+        `Accessibility analysis completed for ${normalizedCurrent}. violations=${axeRun.results.violations.length}, passes=${axeRun.results.passes.length}, incomplete=${axeRun.results.incomplete.length}, inapplicable=${axeRun.results.inapplicable.length}, durationMs=${axeRun.durationMs}.`
       );
+    } catch (error) {
+      accessibilityError = formatAxeError(normalizedCurrent, error);
+      addScanLog(scanId, 'analyzing-page', accessibilityError);
     }
 
     return {
@@ -239,12 +257,16 @@ async function analyzeSinglePage(
     const safeUrl = normalizeCrawlUrl(targetUrl) ?? targetUrl;
     const message = error instanceof Error ? error.message : 'Page analysis failed.';
 
+    addScanLog(
+      scanId,
+      'analyzing-page',
+      `Page analysis failed for ${safeUrl}. ${formatErrorDetails(error, 'page-analysis')}`
+    );
+
     return {
       url: safeUrl,
       title: safeUrl,
       discoveredLinks: [],
-      // If a page fails to load or the DOM cannot be collected, we return an
-      // error result instead of crashing the whole site scan.
       seo: analyzeSeoForPage(safeUrl, safeUrl, {
         title: '',
         metaDescription: '',
@@ -266,21 +288,47 @@ async function analyzeSinglePage(
   }
 }
 
-async function runAxeOnPage(page: Page): Promise<Pick<AxeResults, 'violations' | 'passes' | 'incomplete' | 'inapplicable'>> {
-  // Ask axe for the specific result buckets that this app reasons about.
-  // Making the result types explicit avoids depending on package defaults.
-  const results = await new AxeBuilder({ page })
-    .options({
-      resultTypes: ['violations', 'passes', 'incomplete', 'inapplicable']
-    })
-    .analyze();
+async function runAxeOnPage(page: Page): Promise<{
+  results: Pick<AxeResults, 'violations' | 'passes' | 'incomplete' | 'inapplicable'>;
+  durationMs: number;
+}> {
+  const startedAt = Date.now();
 
-  return {
-    violations: results.violations ?? [],
-    passes: results.passes ?? [],
-    incomplete: results.incomplete ?? [],
-    inapplicable: results.inapplicable ?? []
-  };
+  let builder: AxeBuilder;
+
+  try {
+    // Use the official Playwright integration in its normal form. The README
+    // shows `new AxeBuilder({ page }).analyze()` as the intended usage pattern.
+    // Avoiding a custom `axeSource` here prevents us from pushing a Node/CommonJS
+    // flavored bundle into the browser page context.
+    builder = new AxeBuilder({ page }).options({
+      resultTypes: ['violations', 'passes', 'incomplete', 'inapplicable']
+    });
+  } catch (error) {
+    throw new Error(formatErrorDetails(error, 'before-analyze'));
+  }
+
+  let results: AxeResults;
+
+  try {
+    results = await builder.analyze();
+  } catch (error) {
+    throw new Error(formatErrorDetails(error, 'during-analyze'));
+  }
+
+  try {
+    return {
+      results: {
+        violations: results.violations ?? [],
+        passes: results.passes ?? [],
+        incomplete: results.incomplete ?? [],
+        inapplicable: results.inapplicable ?? []
+      },
+      durationMs: Date.now() - startedAt
+    };
+  } catch (error) {
+    throw new Error(formatErrorDetails(error, 'transforming-results'));
+  }
 }
 
 function minifyAxeRule(rule: {
@@ -297,4 +345,22 @@ function minifyAxeRule(rule: {
     impact: rule.impact ?? null,
     nodeCount: rule.nodes.length
   };
+}
+
+function formatAxeError(url: string, error: unknown): string {
+  return `Accessibility analysis failed for ${url}. ${formatErrorDetails(error, 'during-analyze')}`;
+}
+
+function formatErrorDetails(error: unknown, phase: 'before-analyze' | 'during-analyze' | 'transforming-results' | 'page-analysis'): string {
+  if (!(error instanceof Error)) {
+    return `phase=${phase}; message=Unknown non-Error value was thrown.`;
+  }
+
+  const stackExcerpt = error.stack
+    ?.split('\n')
+    .slice(0, 3)
+    .map((line) => line.trim())
+    .join(' | ');
+
+  return `phase=${phase}; name=${error.name}; message=${error.message}${stackExcerpt ? `; stack=${stackExcerpt}` : ''}`;
 }

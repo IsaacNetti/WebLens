@@ -1,9 +1,10 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // Playwright ships native browser dependencies and is better treated as an
-  // external server package instead of being bundled into route handlers.
-  serverExternalPackages: ['playwright']
+  // Playwright and the axe Playwright integration are better treated as
+  // external server packages instead of being bundled into route handlers.
+  // That helps keep the official runtime behavior intact.
+  serverExternalPackages: ['playwright', '@axe-core/playwright', 'axe-core']
 };
 
 export default nextConfig;
