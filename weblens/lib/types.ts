@@ -131,6 +131,17 @@ export interface AxeRuleResult {
   nodeCount: number;
 }
 
+export interface PageTechnicalSummary {
+  url: string;
+  title: string;
+  seoFailedRuleIds: string[];
+  axeViolationCount: number;
+  axePassCount: number;
+  discoveredLinks: number;
+  error?: string;
+  accessibilityError?: string;
+}
+
 export interface PageAnalysisResult {
   url: string;
   title: string;
@@ -141,4 +152,5 @@ export interface PageAnalysisResult {
     passes: AxeRuleResult[];
   };
   error?: string;
+  accessibilityError?: string;
 }

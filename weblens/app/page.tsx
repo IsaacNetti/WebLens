@@ -20,6 +20,13 @@ export default function HomePage() {
 
           <UrlSearchForm />
         </div>
+
+        <div className="mt-12 flex flex-col items-center gap-1 text-xs text-slate-400 dark:text-slate-500">
+          <p>Scroll down for more information</p>
+          <span aria-hidden="true" className="text-base leading-none">
+            ↓
+          </span>
+        </div>
       </section>
 
       <section className="border-t border-slate-200 dark:border-slate-800">

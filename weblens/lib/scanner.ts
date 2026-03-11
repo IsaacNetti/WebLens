@@ -1,5 +1,5 @@
-import axe from 'axe-core';
-import { chromium, type BrowserContext } from 'playwright';
+import AxeBuilder from '@axe-core/playwright';
+import { chromium, type BrowserContext, type Page } from 'playwright';
 
 import { aggregateAccessibility } from '@/lib/accessibility';
 import { addScanLog, completeScan, failScan, getScan, setScanStatus, updateProgress } from '@/lib/scan-store';
@@ -20,14 +20,11 @@ export async function runSiteScan(scanId: string): Promise<void> {
   addScanLog(scanId, 'starting', `Starting scan for ${scan.targetUrl}`);
   addScanLog(scanId, 'launching-browser', 'Launching Chromium through Playwright.');
 
-  // A single browser/context per scan keeps the implementation simple.
-  // A more advanced version might pool browsers or parallelize page work.
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
 
   try {
     const origin = new URL(scan.targetUrl).origin;
-    // Breadth-first queue keeps the crawl logic beginner-readable.
     const queue: string[] = [scan.targetUrl];
     const discovered = new Set<string>([scan.targetUrl]);
     const analyzedPages: PageAnalysisResult[] = [];
@@ -53,9 +50,7 @@ export async function runSiteScan(scanId: string): Promise<void> {
       setScanStatus(scanId, 'running', 'analyzing-page', nextUrl);
       addScanLog(scanId, 'analyzing-page', `Analyzing ${nextUrl}`);
 
-      // Each page is processed sequentially so the status log reads clearly
-      // and the server work is easier to understand.
-      const result = await analyzeSinglePage(context, nextUrl, origin);
+      const result = await analyzeSinglePage(context, nextUrl, origin, scanId);
       analyzedPages.push(result);
 
       for (const discoveredLink of result.discoveredLinks) {
@@ -101,7 +96,8 @@ export async function runSiteScan(scanId: string): Promise<void> {
         axeViolationCount: page.accessibility.violations.length,
         axePassCount: page.accessibility.passes.length,
         discoveredLinks: page.discoveredLinks.length,
-        error: page.error
+        error: page.error,
+        accessibilityError: page.accessibilityError
       })),
       technical: {
         crawlRules: [
@@ -114,13 +110,10 @@ export async function runSiteScan(scanId: string): Promise<void> {
         libraries: [
           'Next.js route handlers are used for start and polling endpoints.',
           'Playwright loads pages in a real browser context and executes page scripts.',
-          'axe-core runs in the browser page and returns automated accessibility findings.',
+          '@axe-core/playwright runs axe-core in the page using the official Playwright integration.',
           'Tailwind CSS handles the UI styling with a restrained default look.'
         ],
-        scoringMethod: [
-          seo.scoringNote,
-          accessibility.scoringNote
-        ],
+        scoringMethod: [seo.scoringNote, accessibility.scoringNote],
         limitations: [
           'This version scans sequentially, which is slower than a concurrent worker design but easier to read and reason about.',
           'Only public same-origin pages discovered from crawled links are included.',
@@ -145,7 +138,8 @@ export async function runSiteScan(scanId: string): Promise<void> {
 async function analyzeSinglePage(
   context: BrowserContext,
   targetUrl: string,
-  origin: string
+  origin: string,
+  scanId: string
 ): Promise<PageAnalysisResult> {
   const page = await context.newPage();
 
@@ -157,7 +151,7 @@ async function analyzeSinglePage(
 
     await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 
-    // Collect the page data we need for SEO checks and future crawling.
+    // Collect DOM data first so SEO can still succeed even if accessibility fails later.
     const dom = await page.evaluate(() => {
       const title = document.title ?? '';
       const metaDescription =
@@ -194,32 +188,37 @@ async function analyzeSinglePage(
       .filter((link) => shouldVisitLink(link, origin))
       .filter((link) => link !== normalizedCurrent);
 
-    // Inject axe-core into the loaded page, then ask it to evaluate the DOM.
-    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
-    await page.addScriptTag({ content: axe.source });
-
-    const axeResults = await page.evaluate(async () => {
-      const raw = await (window as typeof window & { axe: typeof axe }).axe.run(document, {
-        resultTypes: ['violations', 'passes']
-      });
-
-      return {
-        violations: raw.violations,
-        passes: raw.passes
-      };
-    });
-
     const seoResult = analyzeSeoForPage(normalizedCurrent, dom.title || normalizedCurrent, dom);
+
+    let accessibility: PageAnalysisResult['accessibility'] = {
+      violations: [],
+      passes: []
+    };
+    let accessibilityError: string | undefined;
+
+    try {
+      const axeResults = await runAxeOnPage(page);
+      accessibility = {
+        violations: axeResults.violations.map(minifyAxeRule),
+        passes: axeResults.passes.map(minifyAxeRule)
+      };
+    } catch (error) {
+      accessibilityError = error instanceof Error ? error.message : 'Accessibility analysis failed.';
+
+      addScanLog(
+        scanId,
+        'analyzing-page',
+        `Accessibility analysis failed for ${normalizedCurrent}, but SEO results were still collected.`
+      );
+    }
 
     return {
       url: normalizedCurrent,
       title: dom.title || normalizedCurrent,
       discoveredLinks,
       seo: seoResult,
-      accessibility: {
-        violations: axeResults.violations.map(minifyAxeRule),
-        passes: axeResults.passes.map(minifyAxeRule)
-      }
+      accessibility,
+      accessibilityError
     };
   } catch (error) {
     const safeUrl = normalizeCrawlUrl(targetUrl) ?? targetUrl;
@@ -229,8 +228,6 @@ async function analyzeSinglePage(
       url: safeUrl,
       title: safeUrl,
       discoveredLinks: [],
-      // If a page fails to load, we return an error result instead of crashing
-      // the whole site scan.
       seo: analyzeSeoForPage(safeUrl, safeUrl, {
         title: '',
         metaDescription: '',
@@ -250,6 +247,17 @@ async function analyzeSinglePage(
   } finally {
     await page.close().catch(() => undefined);
   }
+}
+
+async function runAxeOnPage(page: Page) {
+  // Use the official Playwright integration instead of manually injecting
+  // axe.source and calling window.axe.run ourselves.
+  const results = await new AxeBuilder({ page }).analyze();
+
+  return {
+    violations: results.violations,
+    passes: results.passes
+  };
 }
 
 function minifyAxeRule(rule: {

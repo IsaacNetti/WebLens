@@ -150,12 +150,12 @@ export function ResultsClient({ targetUrl, domain }: ResultsClientProps) {
         </div>
       </section>
 
-      <StatusTimeline logs={scan?.logs ?? [{ id: 'starting', createdAt: 'pending', stage: 'starting', message: 'Waiting for the server to start the scan.' }]} />
-
       <section className="grid gap-6 lg:grid-cols-2">
         <ResultsColumn title="SEO" summary={scan?.result?.seo} />
         <ResultsColumn title="Accessibility" summary={scan?.result?.accessibility} />
       </section>
+
+      <StatusTimeline logs={scan?.logs ?? [{ id: 'starting', createdAt: 'pending', stage: 'starting', message: 'Waiting for the server to start the scan.' }]} />
 
       {scan?.result ? <TechnicalDetails scan={scan} result={scan.result} /> : null}
     </div>
