@@ -1,36 +1,32 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Site Score
 
-## Getting Started
+A minimal Next.js app that crawls a public site, checks simple SEO rules, runs axe-core accessibility analysis through Playwright, and shows the results on a dedicated results page.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Next.js App Router
+- Tailwind CSS
+- TypeScript
+- Playwright
+- axe-core
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Install dependencies:
+   - `npm install`
+2. Install the Playwright browser binaries:
+   - `npx playwright install chromium`
+3. Start the dev server:
+   - `npm run dev`
+4. Visit `http://localhost:3000`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Notes
 
-## Learn More
+- This version stores scan progress in memory. That is fine for local development, but not durable.
+- Playwright runs on the server side only.
+- The crawl is intentionally sequential for readability.
+- The UI polls for progress once per second.
 
-To learn more about Next.js, take a look at the following resources:
+## Deployment caveat
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The local-first architecture works best in a long-lived Node process. On Vercel, the in-memory scan store and long-running browser work are not a strong fit for production-grade reliability. A v2 deployment-friendly version would move scanning into a separate worker or queue-backed service.
