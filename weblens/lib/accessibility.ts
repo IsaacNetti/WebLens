@@ -19,10 +19,8 @@ export function aggregateAccessibility(pageResults: PageAnalysisResult[]): Score
   }
 
   const pagesWithResults = pageResults.filter((page) => !page.error);
-  const pagesWithAxeResults = pagesWithResults.filter(
-    (page) => page.accessibility.violations.length > 0 || page.accessibility.passes.length > 0
-  );
-  const totalPages = pagesWithResults.length;
+  const pagesWithSuccessfulAxe = pagesWithResults.filter((page) => !page.accessibilityError);
+  const totalPages = pagesWithSuccessfulAxe.length;
 
   if (pagesWithResults.length === 0) {
     return {
@@ -34,23 +32,25 @@ export function aggregateAccessibility(pageResults: PageAnalysisResult[]): Score
     };
   }
 
-  if (pagesWithAxeResults.length === 0) {
+  if (pagesWithSuccessfulAxe.length === 0) {
     return {
       score: 0,
       state: 'poor',
       passed: [],
       failed: [],
-      scoringNote: 'Pages were analyzed successfully, but axe-core did not return accessibility results for any page.'
+      scoringNote: 'Pages were analyzed successfully, but axe-core could not complete an accessibility run for any page.'
     };
   }
 
+  // Group the same axe rule across multiple pages so the UI can explain
+  // site-wide patterns instead of dumping page-by-page noise.
   const violationMap = new Map<string, { rule: AxeRuleResult; pages: Set<string> }>();
   const passMap = new Map<string, { rule: AxeRuleResult; pages: Set<string> }>();
 
   let totalViolations = 0;
   let totalPasses = 0;
 
-  for (const page of pagesWithAxeResults) {
+  for (const page of pagesWithSuccessfulAxe) {
     totalViolations += page.accessibility.violations.length;
     totalPasses += page.accessibility.passes.length;
 
@@ -119,8 +119,22 @@ export function aggregateAccessibility(pageResults: PageAnalysisResult[]): Score
     }))
     .sort((a, b) => a.title.localeCompare(b.title));
 
+  // This score is intentionally simple and explainable: it treats every axe
+  // pass and every axe violation as one counted observation.
   const denominator = totalPasses + totalViolations;
-  const score = denominator === 0 ? 100 : Math.round((totalPasses / denominator) * 100);
+
+  if (denominator === 0) {
+    return {
+      score: 100,
+      state: 'good',
+      passed,
+      failed,
+      scoringNote:
+        'Axe-core completed successfully on the analyzed pages, but it only returned incomplete or inapplicable results. This version scores pass and violation results only, so zero automated failures are shown here without counting incomplete or inapplicable items.'
+    };
+  }
+
+  const score = Math.round((totalPasses / denominator) * 100);
 
   return {
     score,
@@ -128,7 +142,7 @@ export function aggregateAccessibility(pageResults: PageAnalysisResult[]): Score
     passed,
     failed,
     scoringNote:
-      'Accessibility score = total axe pass results divided by total axe pass and violation results returned across scanned pages. Incomplete and inapplicable axe results are not counted in this version.'
+      'Accessibility score = total axe pass results divided by total axe pass and violation results returned across pages where axe-core completed successfully. Incomplete and inapplicable axe results are not counted in this version.'
   };
 }
 

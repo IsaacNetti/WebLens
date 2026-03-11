@@ -5,6 +5,7 @@ import { aggregateAccessibility } from '@/lib/accessibility';
 import { addScanLog, completeScan, failScan, getScan, setScanStatus, updateProgress } from '@/lib/scan-store';
 import { aggregateSeo, analyzeSeoForPage, getSeoRuleIdsThatFailed } from '@/lib/seo';
 import { AxeRuleResult, FinalScanResult, PageAnalysisResult, SeoDomSnapshot } from '@/lib/types';
+import type { AxeResults } from 'axe-core';
 import { normalizeCrawlUrl, shouldVisitLink } from '@/lib/url';
 
 const PAGE_TIMEOUT_MS = 30_000;
@@ -20,11 +21,14 @@ export async function runSiteScan(scanId: string): Promise<void> {
   addScanLog(scanId, 'starting', `Starting scan for ${scan.targetUrl}`);
   addScanLog(scanId, 'launching-browser', 'Launching Chromium through Playwright.');
 
+  // A single browser/context per scan keeps the implementation simple.
+  // A more advanced version might pool browsers or parallelize page work.
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
 
   try {
     const origin = new URL(scan.targetUrl).origin;
+    // Breadth-first queue keeps the crawl logic beginner-readable.
     const queue: string[] = [scan.targetUrl];
     const discovered = new Set<string>([scan.targetUrl]);
     const analyzedPages: PageAnalysisResult[] = [];
@@ -50,6 +54,8 @@ export async function runSiteScan(scanId: string): Promise<void> {
       setScanStatus(scanId, 'running', 'analyzing-page', nextUrl);
       addScanLog(scanId, 'analyzing-page', `Analyzing ${nextUrl}`);
 
+      // Each page is processed sequentially so the status log reads clearly
+      // and the server work is easier to understand.
       const result = await analyzeSinglePage(context, nextUrl, origin, scanId);
       analyzedPages.push(result);
 
@@ -151,7 +157,8 @@ async function analyzeSinglePage(
 
     await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 
-    // Collect DOM data first so SEO can still succeed even if accessibility fails later.
+    // Collect the page data we need for SEO checks and future crawling first.
+    // This lets SEO succeed even if accessibility tooling fails later.
     const dom = await page.evaluate(() => {
       const title = document.title ?? '';
       const metaDescription =
@@ -202,6 +209,14 @@ async function analyzeSinglePage(
         violations: axeResults.violations.map(minifyAxeRule),
         passes: axeResults.passes.map(minifyAxeRule)
       };
+
+      if (axeResults.violations.length === 0 && axeResults.passes.length === 0) {
+        addScanLog(
+          scanId,
+          'analyzing-page',
+          `Accessibility analysis completed for ${normalizedCurrent}, but axe only returned incomplete or inapplicable results.`
+        );
+      }
     } catch (error) {
       accessibilityError = error instanceof Error ? error.message : 'Accessibility analysis failed.';
 
@@ -228,6 +243,8 @@ async function analyzeSinglePage(
       url: safeUrl,
       title: safeUrl,
       discoveredLinks: [],
+      // If a page fails to load or the DOM cannot be collected, we return an
+      // error result instead of crashing the whole site scan.
       seo: analyzeSeoForPage(safeUrl, safeUrl, {
         title: '',
         metaDescription: '',
@@ -249,14 +266,20 @@ async function analyzeSinglePage(
   }
 }
 
-async function runAxeOnPage(page: Page) {
-  // Use the official Playwright integration instead of manually injecting
-  // axe.source and calling window.axe.run ourselves.
-  const results = await new AxeBuilder({ page }).analyze();
+async function runAxeOnPage(page: Page): Promise<Pick<AxeResults, 'violations' | 'passes' | 'incomplete' | 'inapplicable'>> {
+  // Ask axe for the specific result buckets that this app reasons about.
+  // Making the result types explicit avoids depending on package defaults.
+  const results = await new AxeBuilder({ page })
+    .options({
+      resultTypes: ['violations', 'passes', 'incomplete', 'inapplicable']
+    })
+    .analyze();
 
   return {
-    violations: results.violations,
-    passes: results.passes
+    violations: results.violations ?? [],
+    passes: results.passes ?? [],
+    incomplete: results.incomplete ?? [],
+    inapplicable: results.inapplicable ?? []
   };
 }
 

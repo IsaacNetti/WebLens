@@ -71,6 +71,7 @@ export interface PageTechnicalSummary {
   axePassCount: number;
   discoveredLinks: number;
   error?: string;
+  accessibilityError?: string;
 }
 
 export interface FinalScanResult {
@@ -129,17 +130,6 @@ export interface AxeRuleResult {
   description: string;
   impact: string | null;
   nodeCount: number;
-}
-
-export interface PageTechnicalSummary {
-  url: string;
-  title: string;
-  seoFailedRuleIds: string[];
-  axeViolationCount: number;
-  axePassCount: number;
-  discoveredLinks: number;
-  error?: string;
-  accessibilityError?: string;
 }
 
 export interface PageAnalysisResult {
