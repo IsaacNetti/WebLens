@@ -1,4 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
+import axeCore from 'axe-core';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 
 import { aggregateAccessibility } from '@/lib/accessibility';
@@ -171,10 +172,20 @@ async function analyzeSinglePage(
       const metaDescription =
         document.querySelector<HTMLMetaElement>('meta[name="description"]')?.content?.trim() ?? '';
       const h1Count = document.querySelectorAll('h1').length;
+      const h2Count = document.querySelectorAll('h2').length;
+      const textContentLength = document.body?.innerText?.replace(/\s+/g, ' ').trim().length ?? 0;
       const lang = document.documentElement.getAttribute('lang')?.trim() ?? '';
       const canonical =
         document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href?.trim() ?? '';
       const robots = document.querySelector<HTMLMetaElement>('meta[name="robots"]')?.content?.toLowerCase() ?? '';
+      const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content?.trim() ?? '';
+      const openGraphTitle =
+        document.querySelector<HTMLMetaElement>('meta[property="og:title"], meta[name="og:title"]')?.content?.trim() ?? '';
+      const openGraphDescription =
+        document.querySelector<HTMLMetaElement>('meta[property="og:description"], meta[name="og:description"]')?.content?.trim() ?? '';
+      const hasStructuredData =
+        Boolean(document.querySelector('script[type="application/ld+json"]')) ||
+        Boolean(document.querySelector('[itemscope], [itemtype*="schema.org"], [itemprop]'));
       const images = [...document.querySelectorAll('img')];
       const imagesMissingAlt = images.filter((image) => !image.hasAttribute('alt') || !image.getAttribute('alt')?.trim()).length;
       const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href]')]
@@ -185,11 +196,18 @@ async function analyzeSinglePage(
         title,
         metaDescription,
         h1Count,
+        h2Count,
+        textContentLength,
         lang,
         canonical,
         hasNoindex: robots.includes('noindex'),
         imageCount: images.length,
         imagesMissingAlt,
+        internalLinkCount: 0,
+        viewport,
+        hasStructuredData,
+        openGraphTitle,
+        openGraphDescription,
         links
       } satisfies SeoDomSnapshot & { links: string[] };
     });
@@ -208,7 +226,12 @@ async function analyzeSinglePage(
       .filter((link) => shouldVisitLink(link, origin))
       .filter((link) => link !== normalizedCurrent);
 
-    const seoResult = analyzeSeoForPage(normalizedCurrent, dom.title || normalizedCurrent, dom);
+    // The DOM snapshot is collected before crawl-link filtering, so we add the
+    // final internal-link count here after same-origin filtering is complete.
+    const seoResult = analyzeSeoForPage(normalizedCurrent, dom.title || normalizedCurrent, {
+      ...dom,
+      internalLinkCount: discoveredLinks.length
+    });
 
     addScanLog(
       scanId,
@@ -242,6 +265,7 @@ async function analyzeSinglePage(
       );
     } catch (error) {
       accessibilityError = formatAxeError(normalizedCurrent, error);
+
       addScanLog(scanId, 'analyzing-page', accessibilityError);
     }
 
@@ -267,15 +291,24 @@ async function analyzeSinglePage(
       url: safeUrl,
       title: safeUrl,
       discoveredLinks: [],
+      // If a page fails to load or the DOM cannot be collected, we return an
+      // error result instead of crashing the whole site scan.
       seo: analyzeSeoForPage(safeUrl, safeUrl, {
         title: '',
         metaDescription: '',
         h1Count: 0,
+        h2Count: 0,
+        textContentLength: 0,
         lang: '',
         canonical: '',
         hasNoindex: false,
         imageCount: 0,
-        imagesMissingAlt: 0
+        imagesMissingAlt: 0,
+        internalLinkCount: 0,
+        viewport: '',
+        hasStructuredData: false,
+        openGraphTitle: '',
+        openGraphDescription: ''
       }),
       accessibility: {
         violations: [],
@@ -297,11 +330,14 @@ async function runAxeOnPage(page: Page): Promise<{
   let builder: AxeBuilder;
 
   try {
-    // Use the official Playwright integration in its normal form. The README
-    // shows `new AxeBuilder({ page }).analyze()` as the intended usage pattern.
-    // Avoiding a custom `axeSource` here prevents us from pushing a Node/CommonJS
-    // flavored bundle into the browser page context.
-    builder = new AxeBuilder({ page }).options({
+    // In a Next.js server runtime, the package's automatic axe source lookup can
+    // fail because the bundled module path is not always a normal absolute file
+    // path. Passing axeCore.source directly keeps the official Playwright
+    // integration, but removes that fragile path-resolution step.
+    builder = new AxeBuilder({
+      page,
+      axeSource: axeCore.source
+    }).options({
       resultTypes: ['violations', 'passes', 'incomplete', 'inapplicable']
     });
   } catch (error) {
@@ -348,6 +384,10 @@ function minifyAxeRule(rule: {
 }
 
 function formatAxeError(url: string, error: unknown): string {
+  if (error instanceof Error) {
+    return `Accessibility analysis failed for ${url}. ${error.message}`;
+  }
+
   return `Accessibility analysis failed for ${url}. ${formatErrorDetails(error, 'during-analyze')}`;
 }
 

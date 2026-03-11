@@ -27,12 +27,21 @@ export type ScoreState = 'good' | 'medium' | 'poor';
 
 export type SeoRuleId =
   | 'title-present'
+  | 'title-length-reasonable'
   | 'meta-description-present'
+  | 'meta-description-length-reasonable'
   | 'single-h1'
+  | 'has-h2'
+  | 'meaningful-text-content'
   | 'images-have-alt'
   | 'html-lang-present'
   | 'canonical-present'
-  | 'indexable';
+  | 'indexable'
+  | 'internal-links-present'
+  | 'viewport-present'
+  | 'structured-data-present'
+  | 'open-graph-title-present'
+  | 'open-graph-description-present';
 
 export interface StatusEvent {
   id: string;
@@ -111,11 +120,18 @@ export interface SeoDomSnapshot {
   title: string;
   metaDescription: string;
   h1Count: number;
+  h2Count: number;
+  textContentLength: number;
   lang: string;
   canonical: string;
   hasNoindex: boolean;
   imageCount: number;
   imagesMissingAlt: number;
+  internalLinkCount: number;
+  viewport: string;
+  hasStructuredData: boolean;
+  openGraphTitle: string;
+  openGraphDescription: string;
 }
 
 export interface SeoPageResult {
