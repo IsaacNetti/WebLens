@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { getScan } from '@/lib/scan-store';
+import { getScanSnapshot } from '@/lib/redis/scans';
 
 export const runtime = 'nodejs';
 
@@ -9,7 +9,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const scan = getScan(id);
+  const scan = await getScanSnapshot(id);
 
   if (!scan) {
     return NextResponse.json({ error: 'Scan not found.' }, { status: 404 });

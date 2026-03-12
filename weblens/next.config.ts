@@ -1,9 +1,8 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // Playwright and the axe Playwright integration are better treated as
-  // external server packages instead of being bundled into route handlers.
-  // That helps keep the official runtime behavior intact.
+  // These packages should keep their normal Node runtime behavior instead of
+  // being bundled into Vercel route handlers.
   serverExternalPackages: ['playwright', '@axe-core/playwright', 'axe-core']
 };
 

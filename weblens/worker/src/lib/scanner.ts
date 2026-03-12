@@ -3,7 +3,7 @@ import type { AxeResults } from 'axe-core';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 
 import { aggregateAccessibility } from './accessibility';
-import { failWorkerScan, finishScan, logStage, setProgress, setStage } from '../logger';
+import { failWorkerScan, finishScan, logStage, setProgress, setStage } from './logger';
 import { aggregateSeo, analyzeSeoForPage, getSeoRuleIdsThatFailed } from './seo';
 import { AxeRuleResult, FinalScanResult, PageAnalysisResult, SeoDomSnapshot } from './types';
 import { normalizeCrawlUrl, shouldVisitLink } from './url';

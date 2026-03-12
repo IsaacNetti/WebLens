@@ -10,10 +10,11 @@ export default function HomePage() {
               SEO and accessibility scanner
             </p>
             <h1 className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-slate-50 sm:text-5xl">
-              WebLens
+              Score a public website
             </h1>
             <p className="mx-auto max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300 sm:text-base">
-              Enter the url of your website to get your score!
+              Enter a full URL or a bare domain. The app will normalize the input, crawl internal pages on the same
+              domain, and report rule-based SEO and automated accessibility findings.
             </p>
           </div>
 
@@ -76,10 +77,12 @@ export default function HomePage() {
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">What the checks mean</h2>
             <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
               <p>
-                The SEO checks for things search engines commonly look for when reccomending websites.The higher your score the easier your website is to find!
+                The SEO checks look for straightforward structural signals like titles, descriptions, heading usage,
+                canonical tags, image alt text, and language declarations.
               </p>
               <p>
-                The accessibility checks for non-standard ways people access websites, a higher score means your website can be accessed by all kinds of people using all kinds of tools!
+                The accessibility checks highlight automated issues such as missing names, color contrast problems, and
+                other DOM-level problems that tools can detect reliably.
               </p>
             </div>
           </article>

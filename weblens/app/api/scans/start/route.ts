@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { runSiteScan } from '@/lib/scanner';
-import { createScan } from '@/lib/scan-store';
+import { createQueuedScan, failScan, touchScan } from '@/lib/redis/scans';
+import { dispatchScanToWorker } from '@/lib/worker/client';
 import { normalizePublicUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
@@ -18,11 +18,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: normalized.error }, { status: 400 });
   }
 
-  const scan = createScan(normalized.value, normalized.domain, maxPages);
+  const scan = await createQueuedScan(normalized.value, normalized.domain, maxPages);
 
-  // Fire-and-forget works locally because the dev server is a long-lived Node
-  // process. This is one of the reasons this architecture is local-first.
-  void runSiteScan(scan.id);
+  try {
+    await dispatchScanToWorker({
+      scanId: scan.id,
+      url: scan.targetUrl,
+      maxPages: scan.maxPages
+    });
 
-  return NextResponse.json({ scanId: scan.id });
+    await touchScan(scan.id);
+
+    return NextResponse.json({ scanId: scan.id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to dispatch the scan worker.';
+    await failScan(scan.id, message);
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
 }
