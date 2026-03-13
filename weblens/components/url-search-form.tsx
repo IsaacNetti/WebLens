@@ -80,7 +80,7 @@ export function UrlSearchForm() {
                 Loading...
               </span>
             ) : (
-              'Score'
+              'Scan'
             )}
           </button>
         </div>

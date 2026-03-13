@@ -1,4 +1,4 @@
-import { AxeRuleResult, CheckRow, PageAnalysisResult, ScoreState, ScoreSummary } from './types';
+import { AxeRuleResult, CheckRow, PageAnalysisResult, ScoreState, ScoreSummary } from '@/lib/types';
 
 const IMPACT_RANK: Record<string, number> = {
   critical: 4,
@@ -42,6 +42,8 @@ export function aggregateAccessibility(pageResults: PageAnalysisResult[]): Score
     };
   }
 
+  // Group the same axe rule across multiple pages so the UI can explain
+  // site-wide patterns instead of dumping page-by-page noise.
   const violationMap = new Map<string, { rule: AxeRuleResult; pages: Set<string> }>();
   const passMap = new Map<string, { rule: AxeRuleResult; pages: Set<string> }>();
 
@@ -117,6 +119,8 @@ export function aggregateAccessibility(pageResults: PageAnalysisResult[]): Score
     }))
     .sort((a, b) => a.title.localeCompare(b.title));
 
+  // This score is intentionally simple and explainable: it treats every axe
+  // pass and every axe violation as one counted observation.
   const denominator = totalPasses + totalViolations;
 
   if (denominator === 0) {

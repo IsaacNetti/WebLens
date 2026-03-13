@@ -1,4 +1,4 @@
-import { CheckRow, ScoreState, ScoreSummary, SeoDomSnapshot, SeoPageResult, SeoRuleId } from './types';
+import { CheckRow, ScoreState, ScoreSummary, SeoDomSnapshot, SeoPageResult, SeoRuleId } from '@/lib/types';
 
 const TITLE_MIN_LENGTH = 15;
 const TITLE_MAX_LENGTH = 60;
@@ -139,7 +139,8 @@ export function analyzeSeoForPage(url: string, title: string, dom: SeoDomSnapsho
       'title-length-reasonable': trimmedTitle.length >= TITLE_MIN_LENGTH && trimmedTitle.length <= TITLE_MAX_LENGTH,
       'meta-description-present': trimmedDescription.length > 0,
       'meta-description-length-reasonable':
-        trimmedDescription.length >= META_DESCRIPTION_MIN_LENGTH && trimmedDescription.length <= META_DESCRIPTION_MAX_LENGTH,
+        trimmedDescription.length >= META_DESCRIPTION_MIN_LENGTH &&
+        trimmedDescription.length <= META_DESCRIPTION_MAX_LENGTH,
       'single-h1': dom.h1Count === 1,
       'has-h2': dom.h2Count > 0,
       'meaningful-text-content': dom.textContentLength >= MIN_TEXT_CONTENT_LENGTH,

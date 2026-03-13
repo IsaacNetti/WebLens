@@ -1,3 +1,14 @@
+export type ValidationResult =
+  | {
+      ok: true;
+      value: string;
+      domain: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 export type ScanStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 export type ScanStage =
@@ -11,6 +22,7 @@ export type ScanStage =
   | 'failed';
 
 export type CheckStatus = 'pass' | 'fail';
+
 export type ScoreState = 'good' | 'medium' | 'poor';
 
 export type SeoRuleId =
@@ -87,6 +99,23 @@ export interface FinalScanResult {
   };
 }
 
+export interface ScanSnapshot {
+  id: string;
+  targetUrl: string;
+  domain: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ScanStatus;
+  stage: ScanStage;
+  maxPages: number;
+  pagesDiscovered: number;
+  pagesScanned: number;
+  currentPage?: string;
+  logs: StatusEvent[];
+  result?: FinalScanResult;
+  error?: string;
+}
+
 export interface SeoDomSnapshot {
   title: string;
   metaDescription: string;
@@ -130,10 +159,4 @@ export interface PageAnalysisResult {
   };
   error?: string;
   accessibilityError?: string;
-}
-
-export interface WorkerRunRequest {
-  scanId: string;
-  url: string;
-  maxPages: number;
 }

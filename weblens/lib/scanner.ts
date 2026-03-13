@@ -1,51 +1,62 @@
 import AxeBuilder from '@axe-core/playwright';
-import type { AxeResults } from 'axe-core';
+import axeCore from 'axe-core';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 
-import { aggregateAccessibility } from './accessibility';
-import { failWorkerScan, finishScan, logStage, setProgress, setStage } from '../logger';
-import { aggregateSeo, analyzeSeoForPage, getSeoRuleIdsThatFailed } from './seo';
-import { AxeRuleResult, FinalScanResult, PageAnalysisResult, SeoDomSnapshot } from './types';
-import { normalizeCrawlUrl, shouldVisitLink } from './url';
+import { aggregateAccessibility } from '@/lib/accessibility';
+import { addScanLog, completeScan, failScan, getScan, setScanStatus, updateProgress } from '@/lib/scan-store';
+import { aggregateSeo, analyzeSeoForPage, getSeoRuleIdsThatFailed } from '@/lib/seo';
+import { AxeRuleResult, FinalScanResult, PageAnalysisResult, SeoDomSnapshot } from '@/lib/types';
+import type { AxeResults } from 'axe-core';
+import { normalizeCrawlUrl, shouldVisitLink } from '@/lib/url';
 
 const PAGE_TIMEOUT_MS = 30_000;
 
-export async function runSiteScan(scanId: string, targetUrl: string, maxPages: number): Promise<void> {
-  await setStage(scanId, 'running', 'starting');
-  await logStage(scanId, 'starting', `Starting scan for ${targetUrl}`);
-  await logStage(scanId, 'launching-browser', 'Launching Chromium through Playwright.');
+export async function runSiteScan(scanId: string): Promise<void> {
+  const scan = getScan(scanId);
 
+  if (!scan) {
+    return;
+  }
+
+  setScanStatus(scanId, 'running', 'starting');
+  addScanLog(scanId, 'starting', `Starting scan for ${scan.targetUrl}`);
+  addScanLog(scanId, 'launching-browser', 'Launching Chromium through Playwright.');
+
+  // A single browser/context per scan keeps the implementation simple.
+  // A more advanced version might pool browsers or parallelize page work.
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
 
   try {
-    const origin = new URL(targetUrl).origin;
-    const queue: string[] = [targetUrl];
-    const discovered = new Set<string>([targetUrl]);
+    const origin = new URL(scan.targetUrl).origin;
+    // Breadth-first queue keeps the crawl logic beginner-readable.
+    const queue: string[] = [scan.targetUrl];
+    const discovered = new Set<string>([scan.targetUrl]);
     const analyzedPages: PageAnalysisResult[] = [];
 
-    await setProgress(scanId, {
-      phase: 'discovering-pages',
+    updateProgress(scanId, {
       pagesDiscovered: discovered.size,
       pagesScanned: 0
     });
 
-    await logStage(
+    addScanLog(
       scanId,
       'discovering-pages',
-      `Seeded the crawl queue with the starting page. Up to ${maxPages} internal pages will be analyzed.`
+      `Seeded the crawl queue with the starting page. Up to ${scan.maxPages} internal pages will be analyzed.`
     );
 
-    while (queue.length > 0 && analyzedPages.length < maxPages) {
+    while (queue.length > 0 && analyzedPages.length < scan.maxPages) {
       const nextUrl = queue.shift();
 
       if (!nextUrl) {
         break;
       }
 
-      await setStage(scanId, 'running', 'analyzing-page', nextUrl);
-      await logStage(scanId, 'analyzing-page', `Page analysis started for ${nextUrl}`);
+      setScanStatus(scanId, 'running', 'analyzing-page', nextUrl);
+      addScanLog(scanId, 'analyzing-page', `Page analysis started for ${nextUrl}`);
 
+      // Each page is processed sequentially so the status log reads clearly
+      // and the server work is easier to understand.
       const result = await analyzeSinglePage(context, nextUrl, origin, scanId);
       analyzedPages.push(result);
 
@@ -58,31 +69,29 @@ export async function runSiteScan(scanId: string, targetUrl: string, maxPages: n
         queue.push(discoveredLink);
       }
 
-      await setProgress(scanId, {
-        phase: 'discovering-pages',
+      updateProgress(scanId, {
         pagesDiscovered: discovered.size,
         pagesScanned: analyzedPages.length,
         currentPage: nextUrl
       });
 
-      await logStage(
+      addScanLog(
         scanId,
         'discovering-pages',
         `Queue now has ${queue.length} pending pages. ${analyzedPages.length} page(s) analyzed so far.`
       );
     }
 
-    await logStage(scanId, 'aggregating-results', 'Aggregating site-wide SEO and accessibility results.');
-    await setStage(scanId, 'running', 'aggregating-results');
+    addScanLog(scanId, 'aggregating-results', 'Aggregating site-wide SEO and accessibility results.');
+    setScanStatus(scanId, 'running', 'aggregating-results');
 
     const successfulPages = analyzedPages.filter((page) => !page.error);
     const seo = aggregateSeo(successfulPages.map((page) => page.seo));
     const accessibility = aggregateAccessibility(successfulPages);
-    const domain = new URL(targetUrl).hostname;
 
     const finalResult: FinalScanResult = {
-      domain,
-      targetUrl,
+      domain: scan.domain,
+      targetUrl: scan.targetUrl,
       pagesDiscovered: discovered.size,
       pagesScanned: analyzedPages.length,
       seo,
@@ -103,13 +112,13 @@ export async function runSiteScan(scanId: string, targetUrl: string, maxPages: n
           'Only same-origin internal links are added to the queue.',
           'Obvious non-HTML assets are skipped based on file extension.',
           'Duplicate URLs are ignored after normalization.',
-          `The scan stops after ${maxPages} analyzed pages.`
+          `The scan stops after ${scan.maxPages} analyzed pages.`
         ],
         libraries: [
           'Next.js route handlers are used for start and polling endpoints.',
           'Playwright loads pages in a real browser context and executes page scripts.',
           '@axe-core/playwright runs axe-core in the page using the official Playwright integration.',
-          'Upstash Redis stores scan metadata, progress, logs, and final results for 24 hours.'
+          'Tailwind CSS handles the UI styling with a restrained default look.'
         ],
         scoringMethod: [seo.scoringNote, accessibility.scoringNote],
         limitations: [
@@ -117,22 +126,17 @@ export async function runSiteScan(scanId: string, targetUrl: string, maxPages: n
           'Only public same-origin pages discovered from crawled links are included.',
           'The validator blocks obvious local/private hostnames but does not fully solve SSRF or DNS-based private-network edge cases.',
           'axe-core covers automated accessibility checks only. Manual review is still needed.',
-          'Redis state expires after 24 hours and is not intended as permanent history.'
+          'The in-memory scan store is local-process state and is not durable across restarts.'
         ]
       }
     };
 
-    await logStage(
-      scanId,
-      'aggregating-results',
-      `Final result summary: ${finalResult.pagesScanned} pages scanned, SEO score ${finalResult.seo.score}, Accessibility score ${finalResult.accessibility.score}.`
-    );
-
-    await finishScan(scanId, finalResult);
+    completeScan(scanId, finalResult);
+    await context.close();
+    await browser.close();
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected scanner failure.';
-    await failWorkerScan(scanId, message);
-  } finally {
+    failScan(scanId, message);
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
   }
@@ -155,12 +159,14 @@ async function analyzeSinglePage(
     await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 
     const pageState = await page.evaluate(() => document.readyState).catch(() => 'unavailable');
-    await logStage(
+    addScanLog(
       scanId,
       'analyzing-page',
       `Page loaded successfully for ${targetUrl}. Final URL: ${page.url()}. readyState: ${pageState}. Frames detected: ${page.frames().length}.`
     );
 
+    // Collect the page data we need for SEO checks and future crawling first.
+    // This lets SEO succeed even if accessibility tooling fails later.
     const dom = await page.evaluate(() => {
       const title = document.title ?? '';
       const metaDescription =
@@ -172,16 +178,16 @@ async function analyzeSinglePage(
       const canonical =
         document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href?.trim() ?? '';
       const robots = document.querySelector<HTMLMetaElement>('meta[name="robots"]')?.content?.toLowerCase() ?? '';
-      const images = [...document.querySelectorAll('img')];
-      const imagesMissingAlt = images.filter((image) => !image.hasAttribute('alt') || !image.getAttribute('alt')?.trim()).length;
       const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content?.trim() ?? '';
-      const hasStructuredData =
-        document.querySelector('script[type="application/ld+json"]') !== null ||
-        document.querySelector('[itemscope], [itemtype], [itemprop]') !== null;
       const openGraphTitle =
         document.querySelector<HTMLMetaElement>('meta[property="og:title"], meta[name="og:title"]')?.content?.trim() ?? '';
       const openGraphDescription =
         document.querySelector<HTMLMetaElement>('meta[property="og:description"], meta[name="og:description"]')?.content?.trim() ?? '';
+      const hasStructuredData =
+        Boolean(document.querySelector('script[type="application/ld+json"]')) ||
+        Boolean(document.querySelector('[itemscope], [itemtype*="schema.org"], [itemprop]'));
+      const images = [...document.querySelectorAll('img')];
+      const imagesMissingAlt = images.filter((image) => !image.hasAttribute('alt') || !image.getAttribute('alt')?.trim()).length;
       const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href]')]
         .map((anchor) => anchor.href)
         .filter(Boolean);
@@ -197,6 +203,7 @@ async function analyzeSinglePage(
         hasNoindex: robots.includes('noindex'),
         imageCount: images.length,
         imagesMissingAlt,
+        internalLinkCount: 0,
         viewport,
         hasStructuredData,
         openGraphTitle,
@@ -205,7 +212,7 @@ async function analyzeSinglePage(
       } satisfies SeoDomSnapshot & { links: string[] };
     });
 
-    await logStage(
+    addScanLog(
       scanId,
       'analyzing-page',
       `DOM snapshot collected for ${page.url()}. Title length: ${dom.title.length}. Images: ${dom.imageCount}. Links discovered before filtering: ${dom.links.length}.`
@@ -219,12 +226,14 @@ async function analyzeSinglePage(
       .filter((link) => shouldVisitLink(link, origin))
       .filter((link) => link !== normalizedCurrent);
 
+    // The DOM snapshot is collected before crawl-link filtering, so we add the
+    // final internal-link count here after same-origin filtering is complete.
     const seoResult = analyzeSeoForPage(normalizedCurrent, dom.title || normalizedCurrent, {
       ...dom,
       internalLinkCount: discoveredLinks.length
     });
 
-    await logStage(
+    addScanLog(
       scanId,
       'analyzing-page',
       `SEO analysis completed for ${normalizedCurrent}. Internal crawl links kept: ${discoveredLinks.length}.`
@@ -236,7 +245,7 @@ async function analyzeSinglePage(
     };
     let accessibilityError: string | undefined;
 
-    await logStage(
+    addScanLog(
       scanId,
       'analyzing-page',
       `Accessibility analysis starting for ${normalizedCurrent}. Page closed: ${page.isClosed()}. Main frame URL: ${page.mainFrame().url()}. Frames: ${page.frames().length}.`
@@ -249,14 +258,15 @@ async function analyzeSinglePage(
         passes: axeRun.results.passes.map(minifyAxeRule)
       };
 
-      await logStage(
+      addScanLog(
         scanId,
         'analyzing-page',
         `Accessibility analysis completed for ${normalizedCurrent}. violations=${axeRun.results.violations.length}, passes=${axeRun.results.passes.length}, incomplete=${axeRun.results.incomplete.length}, inapplicable=${axeRun.results.inapplicable.length}, durationMs=${axeRun.durationMs}.`
       );
     } catch (error) {
       accessibilityError = formatAxeError(normalizedCurrent, error);
-      await logStage(scanId, 'analyzing-page', accessibilityError);
+
+      addScanLog(scanId, 'analyzing-page', accessibilityError);
     }
 
     return {
@@ -271,7 +281,7 @@ async function analyzeSinglePage(
     const safeUrl = normalizeCrawlUrl(targetUrl) ?? targetUrl;
     const message = error instanceof Error ? error.message : 'Page analysis failed.';
 
-    await logStage(
+    addScanLog(
       scanId,
       'analyzing-page',
       `Page analysis failed for ${safeUrl}. ${formatErrorDetails(error, 'page-analysis')}`
@@ -281,6 +291,8 @@ async function analyzeSinglePage(
       url: safeUrl,
       title: safeUrl,
       discoveredLinks: [],
+      // If a page fails to load or the DOM cannot be collected, we return an
+      // error result instead of crashing the whole site scan.
       seo: analyzeSeoForPage(safeUrl, safeUrl, {
         title: '',
         metaDescription: '',
@@ -315,21 +327,44 @@ async function runAxeOnPage(page: Page): Promise<{
 }> {
   const startedAt = Date.now();
 
-  const builder = new AxeBuilder({ page }).options({
-    resultTypes: ['violations', 'passes', 'incomplete', 'inapplicable']
-  });
+  let builder: AxeBuilder;
 
-  const results = await builder.analyze();
+  try {
+    // In a Next.js server runtime, the package's automatic axe source lookup can
+    // fail because the bundled module path is not always a normal absolute file
+    // path. Passing axeCore.source directly keeps the official Playwright
+    // integration, but removes that fragile path-resolution step.
+    builder = new AxeBuilder({
+      page,
+      axeSource: axeCore.source
+    }).options({
+      resultTypes: ['violations', 'passes', 'incomplete', 'inapplicable']
+    });
+  } catch (error) {
+    throw new Error(formatErrorDetails(error, 'before-analyze'));
+  }
 
-  return {
-    results: {
-      violations: results.violations ?? [],
-      passes: results.passes ?? [],
-      incomplete: results.incomplete ?? [],
-      inapplicable: results.inapplicable ?? []
-    },
-    durationMs: Date.now() - startedAt
-  };
+  let results: AxeResults;
+
+  try {
+    results = await builder.analyze();
+  } catch (error) {
+    throw new Error(formatErrorDetails(error, 'during-analyze'));
+  }
+
+  try {
+    return {
+      results: {
+        violations: results.violations ?? [],
+        passes: results.passes ?? [],
+        incomplete: results.incomplete ?? [],
+        inapplicable: results.inapplicable ?? []
+      },
+      durationMs: Date.now() - startedAt
+    };
+  } catch (error) {
+    throw new Error(formatErrorDetails(error, 'transforming-results'));
+  }
 }
 
 function minifyAxeRule(rule: {
@@ -349,10 +384,14 @@ function minifyAxeRule(rule: {
 }
 
 function formatAxeError(url: string, error: unknown): string {
+  if (error instanceof Error) {
+    return `Accessibility analysis failed for ${url}. ${error.message}`;
+  }
+
   return `Accessibility analysis failed for ${url}. ${formatErrorDetails(error, 'during-analyze')}`;
 }
 
-function formatErrorDetails(error: unknown, phase: 'during-analyze' | 'page-analysis'): string {
+function formatErrorDetails(error: unknown, phase: 'before-analyze' | 'during-analyze' | 'transforming-results' | 'page-analysis'): string {
   if (!(error instanceof Error)) {
     return `phase=${phase}; message=Unknown non-Error value was thrown.`;
   }
