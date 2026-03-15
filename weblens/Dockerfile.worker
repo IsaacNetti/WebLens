@@ -1,0 +1,19 @@
+FROM mcr.microsoft.com/playwright:v1.52.0-noble
+
+WORKDIR /spp
+
+# Copy package metadata first for better layer caching
+COPY package.json package-lock.json* ./
+
+# Install all dependencies, including devDependencies, because the worker uses tsx
+RUN npm ci --include=dev
+
+# Copy the full repo, since the worker relies on the root package.json and worker/ source files
+COPY . .
+
+ENV NODE_ENV=production
+ENV PORT=3001
+
+EXPOSE 3001
+
+CMD ["npm", "run", "worker:start"]
