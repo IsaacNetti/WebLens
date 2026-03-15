@@ -8,15 +8,36 @@ import { aggregateSeo, analyzeSeoForPage, getSeoRuleIdsThatFailed } from './seo'
 import { AxeRuleResult, FinalScanResult, PageAnalysisResult, SeoDomSnapshot } from './types';
 import { normalizeCrawlUrl, shouldVisitLink } from './url';
 
-const PAGE_TIMEOUT_MS = 30_000;
+const PAGE_TIMEOUT_MS = 20_000;
+const DOM_STABILIZE_MS = 250;
+
+const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font']);
 
 export async function runSiteScan(scanId: string, targetUrl: string, maxPages: number): Promise<void> {
   await setStage(scanId, 'running', 'starting');
   await logStage(scanId, 'starting', `Starting scan for ${targetUrl}`);
   await logStage(scanId, 'launching-browser', 'Launching Chromium through Playwright.');
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    // These flags keep Chromium lighter on small worker instances.
+    args: ['--disable-dev-shm-usage', '--disable-gpu', '--disable-background-networking']
+  });
   const context = await browser.newContext();
+
+  // We only need the HTML, metadata, and computed accessibility tree. Blocking
+  // heavy binary assets like images, media, and fonts reduces transfer and
+  // memory use without removing the DOM elements that already exist in markup.
+  await context.route('**/*', async (route) => {
+    const type = route.request().resourceType();
+
+    if (BLOCKED_RESOURCE_TYPES.has(type)) {
+      await route.abort();
+      return;
+    }
+
+    await route.continue();
+  });
 
   try {
     const origin = new URL(targetUrl).origin;
@@ -152,7 +173,10 @@ async function analyzeSinglePage(
       timeout: PAGE_TIMEOUT_MS
     });
 
-    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+    // domcontentloaded is enough for our DOM-first checks. A short settle time
+    // helps hydration-driven metadata appear without waiting on long-running
+    // network activity from analytics, images, or ads.
+    await page.waitForTimeout(DOM_STABILIZE_MS);
 
     const pageState = await page.evaluate(() => document.readyState).catch(() => 'unavailable');
     await logStage(
@@ -186,7 +210,7 @@ async function analyzeSinglePage(
         .map((anchor) => anchor.href)
         .filter(Boolean);
 
-      return {
+    return {
   title,
   metaDescription,
   h1Count,
@@ -245,6 +269,8 @@ async function analyzeSinglePage(
 
     try {
       const axeRun = await runAxeOnPage(page);
+      // Convert the raw axe payload into the compact shape used by the UI as
+      // early as possible so we do not retain the full result object longer than needed.
       accessibility = {
         violations: axeRun.results.violations.map(minifyAxeRule),
         passes: axeRun.results.passes.map(minifyAxeRule)

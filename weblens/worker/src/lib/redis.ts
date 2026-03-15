@@ -6,6 +6,8 @@ import { FinalScanResult, ScanStage, ScanStatus, StatusEvent } from './types';
 
 const redis = Redis.fromEnv();
 const SCAN_TTL_SECONDS = 60 * 60 * 24;
+const MAX_SCAN_LOGS = 150;
+const MAX_LOG_MESSAGE_LENGTH = 500;
 
 interface StoredScanMeta {
   id: string;
@@ -46,8 +48,8 @@ function errorKey(scanId: string) {
 }
 
 export async function getScanMeta(scanId: string): Promise<StoredScanMeta | null> {
-  const raw = await redis.get(metaKey(scanId));
-  return raw ? parseJson<StoredScanMeta>(raw) : null;
+  const raw = await redis.get<string>(metaKey(scanId));
+  return raw ? (JSON.parse(raw) as StoredScanMeta) : null;
 }
 
 export async function setScanStatus(scanId: string, status: ScanStatus, phase: ScanStage, currentPage?: string): Promise<void> {
@@ -80,9 +82,9 @@ export async function updateScanProgress(
     return;
   }
 
-  const raw = await redis.get(progressKey(scanId));
+  const raw = await redis.get<string>(progressKey(scanId));
   const current: StoredScanProgress = raw
-    ? parseJson<StoredScanProgress>(raw)
+    ? (JSON.parse(raw) as StoredScanProgress)
     : {
         phase: 'queued',
         pagesDiscovered: 0,
@@ -107,12 +109,17 @@ export async function appendScanLog(scanId: string, stage: ScanStage, message: s
   const event: StatusEvent = {
     id: randomUUID(),
     stage,
-    message,
+    // Keep logs readable but bounded so very noisy scans do not grow memory or Redis usage without limit.
+    message: truncateLogMessage(message),
     createdAt: new Date().toISOString()
   };
 
-  await redis.rpush(logsKey(scanId), JSON.stringify(event));
-  await redis.expire(logsKey(scanId), SCAN_TTL_SECONDS);
+  await Promise.all([
+    redis.rpush(logsKey(scanId), JSON.stringify(event)),
+    // Keep only the most recent log entries, which is enough for the polling UI and troubleshooting.
+    redis.ltrim(logsKey(scanId), -MAX_SCAN_LOGS, -1),
+    redis.expire(logsKey(scanId), SCAN_TTL_SECONDS)
+  ]);
 }
 
 export async function completeScan(scanId: string, result: FinalScanResult): Promise<void> {
@@ -168,10 +175,10 @@ async function setJson(key: string, value: unknown): Promise<void> {
   await redis.set(key, JSON.stringify(value), { ex: SCAN_TTL_SECONDS });
 }
 
-function parseJson<T>(value: unknown): T {
-  if (typeof value === 'string') {
-    return JSON.parse(value) as T;
+function truncateLogMessage(message: string): string {
+  if (message.length <= MAX_LOG_MESSAGE_LENGTH) {
+    return message;
   }
 
-  return value as T;
+  return `${message.slice(0, MAX_LOG_MESSAGE_LENGTH - 1)}…`;
 }
