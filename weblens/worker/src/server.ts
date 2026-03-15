@@ -21,6 +21,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`Worker listening on http://localhost:${port}`);
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Worker listening on port ${port}`);
 });
