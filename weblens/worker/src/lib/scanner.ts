@@ -187,22 +187,23 @@ async function analyzeSinglePage(
         .filter(Boolean);
 
       return {
-        title,
-        metaDescription,
-        h1Count,
-        h2Count,
-        textContentLength,
-        lang,
-        canonical,
-        hasNoindex: robots.includes('noindex'),
-        imageCount: images.length,
-        imagesMissingAlt,
-        viewport,
-        hasStructuredData,
-        openGraphTitle,
-        openGraphDescription,
-        links
-      } satisfies SeoDomSnapshot & { links: string[] };
+  title,
+  metaDescription,
+  h1Count,
+  h2Count,
+  textContentLength,
+  lang,
+  canonical,
+  hasNoindex: robots.includes('noindex'),
+  imageCount: images.length,
+  imagesMissingAlt,
+  internalLinkCount: 0,
+  viewport,
+  hasStructuredData,
+  openGraphTitle,
+  openGraphDescription,
+  links
+} satisfies SeoDomSnapshot & { links: string[] };
     });
 
     await logStage(
