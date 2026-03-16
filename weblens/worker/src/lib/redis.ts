@@ -48,8 +48,8 @@ function errorKey(scanId: string) {
 }
 
 export async function getScanMeta(scanId: string): Promise<StoredScanMeta | null> {
-  const raw = await redis.get<string>(metaKey(scanId));
-  return raw ? (JSON.parse(raw) as StoredScanMeta) : null;
+  const raw = await redis.get(metaKey(scanId));
+  return raw ? parseJson<StoredScanMeta>(raw) : null;
 }
 
 export async function setScanStatus(scanId: string, status: ScanStatus, phase: ScanStage, currentPage?: string): Promise<void> {
@@ -82,9 +82,9 @@ export async function updateScanProgress(
     return;
   }
 
-  const raw = await redis.get<string>(progressKey(scanId));
+   const raw = await redis.get(progressKey(scanId));
   const current: StoredScanProgress = raw
-    ? (JSON.parse(raw) as StoredScanProgress)
+    ? parseJson<StoredScanProgress>(raw)
     : {
         phase: 'queued',
         pagesDiscovered: 0,
@@ -181,4 +181,11 @@ function truncateLogMessage(message: string): string {
   }
 
   return `${message.slice(0, MAX_LOG_MESSAGE_LENGTH - 1)}…`;
+}
+function parseJson<T>(value: unknown): T {
+  if (typeof value === 'string') {
+    return JSON.parse(value) as T;
+  }
+
+  return value as T;
 }
