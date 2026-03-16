@@ -17,7 +17,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
   if (!normalized.ok) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-16 sm:px-6">
-        <div className="border-b border-slate-200 dark:border-slate-800">
+        <div className="">
             <div className="mx-auto flex max-w-6xl items-center px-4 py-3 sm:px-6">
               <Link href="/" className="text-sm font-semibold text-slate-900 no-underline dark:text-slate-100">
                 WebLens
@@ -38,7 +38,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <div className="border-b border-slate-200 dark:border-slate-800">
+        <div className="">
             <div className="mx-auto flex max-w-6xl items-center px-4 py-3 sm:px-6">
               <Link href="/" className="text-sm font-semibold text-slate-900 no-underline dark:text-slate-100">
                 WebLens
